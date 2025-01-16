@@ -35,7 +35,7 @@ APPLICATION_NAME="valet.sh"
 APPLICATION_GIT_NAMESPACE="valet-sh"
 APPLICATION_GIT_REPOSITORY="valet-sh"
 APPLICATION_GIT_URL="https://github.com/${APPLICATION_GIT_NAMESPACE}/${APPLICATION_GIT_REPOSITORY}"
-APPLICATION_INCLUDE_URL="https://raw.githubusercontent.com/${APPLICATION_GIT_NAMESPACE}/install/master/include.sh"
+APPLICATION_INCLUDE_URL="https://raw.githubusercontent.com/${APPLICATION_GIT_NAMESPACE}/install/next/include.sh"
 # define default playbook dir
 ANSIBLE_PLAYBOOKS_DIR="playbooks"
 # define application prefix path
