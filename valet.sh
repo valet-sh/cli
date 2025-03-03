@@ -6,6 +6,7 @@
 # Copyright: (C) 2021 TechDivision GmbH - All Rights Reserved
 # Author: Johann Zelger <j.zelger@techdivision.com>
 # Author: Florian Schmid <f.schmid@techdivision.com>
+# Author: Philipp Dittert <p.dittert@techdivision.com>
 ################################################################################
 
 # Set a global trap for e.g. ctrl+c to run shutdown routine
@@ -14,7 +15,7 @@ trap shutdown SIGINT
 # track start time
 APPLICATION_START_TIME=$(date +%s);
 
-# define application to be auto startet in case of testing purpose for example
+# define application to be auto started in case of testing purpose for example
 : "${APPLICATION_AUTOSTART:=1}"
 # define default spinner enabled
 : "${SPINNER_ENABLED:=1}"
@@ -35,7 +36,6 @@ APPLICATION_NAME="valet.sh"
 APPLICATION_GIT_NAMESPACE="valet-sh"
 APPLICATION_GIT_REPOSITORY="valet-sh"
 APPLICATION_GIT_URL="https://github.com/${APPLICATION_GIT_NAMESPACE}/${APPLICATION_GIT_REPOSITORY}"
-APPLICATION_INCLUDE_URL="https://raw.githubusercontent.com/${APPLICATION_GIT_NAMESPACE}/install/next/include.sh"
 # define default playbook dir
 ANSIBLE_PLAYBOOKS_DIR="playbooks"
 # define application prefix path
@@ -120,64 +120,6 @@ function up2date_check() {
   check_revision
 }
 
-#######################################
-# Validates version against semver
-# Globals:
-#   None
-# Arguments:
-#   Version
-# Returns:
-#   None
-#######################################
-function version_validate() {
-    local version=$1
-    if [[ "$version" =~ ${SEMVER_REGEX} ]]; then
-        if [ "$#" -eq "2" ]; then
-            local major=${BASH_REMATCH[1]}
-            local minor=${BASH_REMATCH[2]}
-            local patch=${BASH_REMATCH[3]}
-            local prere=${BASH_REMATCH[4]}
-            local build=${BASH_REMATCH[5]}
-            eval "$2=(\"$major\" \"$minor\" \"$patch\" \"$prere\" \"$build\")"
-        else
-            echo "$version"
-        fi
-    else
-        out error "Version $version does not match the semver scheme 'X.Y.Z(-PRERELEASE)(+BUILD)'. See help for more information." error
-    fi
-}
-
-##############################################################################
-# Compares versions
-##############################################################################
-function version_compare() {
-    version_validate "$1" V
-    version_validate "$2" V_
-
-    for i in 0 1 2; do
-        local diff=$((${V[$i]} - ${V_[$i]}))
-        if [[ $diff -lt 0 ]]; then
-            echo -1; return 0
-        elif [[ $diff -gt 0 ]]; then
-            echo 1; return 0
-        fi
-    done
-
-    if [[ -z "${V[3]}" ]] && [[ -n "${V_[3]}" ]]; then
-        echo -1; return 0;
-    elif [[ -n "${V[3]}" ]] && [[ -z "${V_[3]}" ]]; then
-        echo 1; return 0;
-    elif [[ -n "${V[3]}" ]] && [[ -n "${V_[3]}" ]]; then
-        if [[ "${V[3]}" > "${V_[3]}" ]]; then
-            echo 1; return 0;
-        elif [[ "${V[3]}" < "${V_[3]}" ]]; then
-          echo -1; return 0;
-        fi
-    fi
-
-    echo 0
-}
-
 ##############################################################################
 # Prepares application by installing dependencies and itself
 ##############################################################################
@@ -189,56 +131,39 @@ function prepare() {
 }
 
 ##############################################################################
+# (re)sets symlink to cli command
+##############################################################################
+function install_link() {
+    VENV_DIR="${1}"
+
+    if [[ ! -d "/usr/local/bin" ]]; then
+      sudo mkdir /usr/local/bin
+      sudo chown -R "$USER" /usr/local/bin
+    fi
+
+    # (re)set system-wide symlink to be in path
+    sudo ln -sf "${VENV_DIR}/bin/valet.sh" "/usr/local/bin/valet.sh"
+}
+
+##############################################################################
 # Upgrade meachanism of applications itself
 ##############################################################################
 function self_upgrade() {
     # exit immediately if a command exits with a non-zero status
     set -e
-    # include external vars and functions
-    source /dev/stdin <<< "$( curl -sS ${APPLICATION_INCLUDE_URL} )"
-    # trigger sudo password check
-    sudo true
-    # create version map to extract major, minor and build parts later on
-    version_validate "${APPLICATION_VERSION}" APPLICATION_VERSION_MAP
-    # define default git tag filter based on major version
-    GIT_TAG_FILTER="^${APPLICATION_VERSION_MAP[0]}.*";
-    # if major 1 than check if old darwin tags are filtered for macos
-    if [[ "${APPLICATION_VERSION_MAP[0]}" = "1" ]] && [[ "${OSTYPE}" = "darwin"* ]]; then
-        GIT_TAG_FILTER="${GIT_TAG_FILTER}${OSTYPE}"
-    fi
-    # check if force self_upgrade was triggered
-    if [ $APPLICATION_FORCE_INFO_ENABLED = 1 ]; then
-        out warning "CAUTION! This will trigger a major version update if it's available."
-        read -r -p "Are You Sure? [Y/n] " input
-        echo "";
-        case $input in
-            [yY][eE][sS]|[yY])
-            GIT_TAG_FILTER=".*"
-        ;;
-            [nN][oO]|[nN])
-        exit 1
-        ;;
-            *)
-        out error "Invalid input '$input'"
-        shutdown
-        ;;
-        esac
-    fi
 
-    # trigger install_upgrade process
-    GIT_TAG=$(install_upgrade "${APPLICATION_GIT_URL}" "${APPLICATION_REPO_DIR}" "${GIT_TAG_FILTER}")
+    # activate application venv
+    source "${APPLICATION_VENV_DIR}/bin/activate"
 
-    # process specific upgrade strategy
-    if [ "$(version_compare "${APPLICATION_VERSION}" "${GIT_TAG}")" = "-1" ] || [ $APPLICATION_FORCE_INFO_ENABLED = 1 ]; then
-        # (re)install dependencies and venv
-        install_dependencies "${APPLICATION_VENV_DIR}" "${APPLICATION_REPO_DIR}"
-        # (re)link app
-        install_link "${APPLICATION_VENV_DIR}" "${APPLICATION_NAME}"
-        # (re)set system-wide symlink to be in path
-        out success "Successfully upgraded from ${APPLICATION_VERSION} to latest version ${GIT_TAG}"
-    else
-        out success "Already on the latest version $GIT_TAG"
-    fi
+    cd ${APPLICATION_VENV_DIR}/upgrade
+    # execute ansible-playbook
+    ansible-playbook "upgrade.yml"
+
+    # deactivate venv if available
+    deactivate 2>/dev/null || true
+
+    # (re)link app
+    install_link "${APPLICATION_VENV_DIR}" "${APPLICATION_NAME}"
 
     touch "${APPLICATION_PREFIX_PATH}/${APPLICATION_GIT_NAMESPACE}/${APPLICATION_GIT_NAMESPACE}"
 }
