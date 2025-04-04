@@ -35,7 +35,6 @@ APPLICATION_NAME="valet.sh"
 APPLICATION_GIT_NAMESPACE="valet-sh"
 APPLICATION_GIT_REPOSITORY="valet-sh"
 APPLICATION_GIT_URL="https://github.com/${APPLICATION_GIT_NAMESPACE}/${APPLICATION_GIT_REPOSITORY}"
-APPLICATION_INCLUDE_URL="https://raw.githubusercontent.com/${APPLICATION_GIT_NAMESPACE}/install/master/include.sh"
 # define default playbook dir
 ANSIBLE_PLAYBOOKS_DIR="playbooks"
 # define application prefix path
@@ -44,8 +43,15 @@ APPLICATION_PREFIX_PATH="/usr/local"
 APPLICATION_REPO_DIR="${APPLICATION_PREFIX_PATH}/${APPLICATION_GIT_NAMESPACE}/${APPLICATION_GIT_REPOSITORY}"
 # define default venv directory
 APPLICATION_VENV_DIR="${APPLICATION_PREFIX_PATH}/${APPLICATION_GIT_NAMESPACE}/venv"
+# define default installer directory
+APPLICATION_INSTALLER_DIR="${APPLICATION_PREFIX_PATH}/${APPLICATION_GIT_NAMESPACE}/installer"
+# define default installer application binary name
+APPLICATION_INSTALLER_BINARY=valet-sh-installer
+# define default base url to installer project
+APPLICATION_GITHUB_INSTALLER_BASE_URL="https://github.com/${APPLICATION_GIT_NAMESPACE}/installer"
 # use current bash source script dir as base_dir
 BASE_DIR=${BASE_DIR:=${APPLICATION_REPO_DIR}}
+ARCH=$(uname -m)
 
 # check if git dir is available in base dir
 if [ -d "${BASE_DIR}/.git" ]; then
@@ -120,64 +126,6 @@ function up2date_check() {
   check_revision
 }
 
-#######################################
-# Validates version against semver
-# Globals:
-#   None
-# Arguments:
-#   Version
-# Returns:
-#   None
-#######################################
-function version_validate() {
-    local version=$1
-    if [[ "$version" =~ ${SEMVER_REGEX} ]]; then
-        if [ "$#" -eq "2" ]; then
-            local major=${BASH_REMATCH[1]}
-            local minor=${BASH_REMATCH[2]}
-            local patch=${BASH_REMATCH[3]}
-            local prere=${BASH_REMATCH[4]}
-            local build=${BASH_REMATCH[5]}
-            eval "$2=(\"$major\" \"$minor\" \"$patch\" \"$prere\" \"$build\")"
-        else
-            echo "$version"
-        fi
-    else
-        out error "Version $version does not match the semver scheme 'X.Y.Z(-PRERELEASE)(+BUILD)'. See help for more information." error
-    fi
-}
-
-##############################################################################
-# Compares versions
-##############################################################################
-function version_compare() {
-    version_validate "$1" V
-    version_validate "$2" V_
-
-    for i in 0 1 2; do
-        local diff=$((${V[$i]} - ${V_[$i]}))
-        if [[ $diff -lt 0 ]]; then
-            echo -1; return 0
-        elif [[ $diff -gt 0 ]]; then
-            echo 1; return 0
-        fi
-    done
-
-    if [[ -z "${V[3]}" ]] && [[ -n "${V_[3]}" ]]; then
-        echo -1; return 0;
-    elif [[ -n "${V[3]}" ]] && [[ -z "${V_[3]}" ]]; then
-        echo 1; return 0;
-    elif [[ -n "${V[3]}" ]] && [[ -n "${V_[3]}" ]]; then
-        if [[ "${V[3]}" > "${V_[3]}" ]]; then
-            echo 1; return 0;
-        elif [[ "${V[3]}" < "${V_[3]}" ]]; then
-          echo -1; return 0;
-        fi
-    fi
-
-    echo 0
-}
-
 ##############################################################################
 # Prepares application by installing dependencies and itself
 ##############################################################################
@@ -189,58 +137,54 @@ function prepare() {
 }
 
 ##############################################################################
-# Upgrade meachanism of applications itself
+# Upgrade mechanism of applications itself
 ##############################################################################
 function self_upgrade() {
     # exit immediately if a command exits with a non-zero status
     set -e
-    # include external vars and functions
-    source /dev/stdin <<< "$( curl -sS ${APPLICATION_INCLUDE_URL} )"
+
     # trigger sudo password check
     sudo true
-    # create version map to extract major, minor and build parts later on
-    version_validate "${APPLICATION_VERSION}" APPLICATION_VERSION_MAP
-    # define default git tag filter based on major version
-    GIT_TAG_FILTER="^${APPLICATION_VERSION_MAP[0]}.*";
-    # if major 1 than check if old darwin tags are filtered for macos
-    if [[ "${APPLICATION_VERSION_MAP[0]}" = "1" ]] && [[ "${OSTYPE}" = "darwin"* ]]; then
-        GIT_TAG_FILTER="${GIT_TAG_FILTER}${OSTYPE}"
-    fi
-    # check if force self_upgrade was triggered
-    if [ $APPLICATION_FORCE_INFO_ENABLED = 1 ]; then
-        out warning "CAUTION! This will trigger a major version update if it's available."
-        read -r -p "Are You Sure? [Y/n] " input
-        echo "";
-        case $input in
-            [yY][eE][sS]|[yY])
-            GIT_TAG_FILTER=".*"
-        ;;
-            [nN][oO]|[nN])
-        exit 1
-        ;;
-            *)
-        out error "Invalid input '$input'"
-        shutdown
-        ;;
-        esac
-    fi
 
-    # trigger install_upgrade process
-    GIT_TAG=$(install_upgrade "${APPLICATION_GIT_URL}" "${APPLICATION_REPO_DIR}" "${GIT_TAG_FILTER}")
-
-    # process specific upgrade strategy
-    if [ "$(version_compare "${APPLICATION_VERSION}" "${GIT_TAG}")" = "-1" ] || [ $APPLICATION_FORCE_INFO_ENABLED = 1 ]; then
-        # (re)install dependencies and venv
-        install_dependencies "${APPLICATION_VENV_DIR}" "${APPLICATION_REPO_DIR}"
-        # (re)link app
-        install_link "${APPLICATION_VENV_DIR}" "${APPLICATION_NAME}"
-        # (re)set system-wide symlink to be in path
-        out success "Successfully upgraded from ${APPLICATION_VERSION} to latest version ${GIT_TAG}"
-    else
-        out success "Already on the latest version $GIT_TAG"
-    fi
+    check_installer
+    command "${APPLICATION_INSTALLER_DIR}/${APPLICATION_INSTALLER_BINARY}" self-upgrade
+    command "${APPLICATION_INSTALLER_DIR}/${APPLICATION_INSTALLER_BINARY}" update
 
     touch "${APPLICATION_PREFIX_PATH}/${APPLICATION_GIT_NAMESPACE}/${APPLICATION_GIT_NAMESPACE}"
+}
+
+function check_installer() {
+  VSH_USER=${USER}
+
+  # if linux
+  if [[ "$OSTYPE" == "linux-gnu" ]]; then
+      VSH_GROUP=${VSH_USER}
+
+      VSH_GITHUB_LATEST_INSTALLER_RELEASE_BINARY=${APPLICATION_GITHUB_INSTALLER_BASE_URL}/releases/latest/download/valet-sh-installer_linux_amd64
+  fi
+
+  # if MacOS on Intel
+  if [[ "$OSTYPE" == "darwin"* ]] && [[ "$ARCH" == "x86_64"* ]]; then
+      VSH_GROUP="admin"
+
+      VSH_GITHUB_LATEST_INSTALLER_RELEASE_BINARY=${APPLICATION_GITHUB_INSTALLER_BASE_URL}/releases/latest/download/valet-sh-installer_darwin_amd64
+  fi
+
+  # if MacOS on Apple Silicon
+  if [[ "$OSTYPE" == "darwin"* ]] && [[ "$ARCH" == "arm"* ]]; then
+      VSH_GROUP="admin"
+
+      VSH_GITHUB_LATEST_INSTALLER_RELEASE_BINARY=${APPLICATION_GITHUB_INSTALLER_BASE_URL}/releases/latest/download/valet-sh-installer_darwin_arm64
+  fi
+
+  sudo mkdir -p "${APPLICATION_INSTALLER_DIR}"
+  sudo chmod 775 "${APPLICATION_INSTALLER_DIR}"
+  sudo chown "${VSH_USER}":"${VSH_GROUP}" "${APPLICATION_INSTALLER_DIR}"
+  # download latest installer binary when none exists
+  if [ ! -f ${APPLICATION_INSTALLER_DIR}/${APPLICATION_INSTALLER_BINARY} ]; then
+      /bin/bash -c "$(curl -fsSL -o ${APPLICATION_INSTALLER_DIR}/${APPLICATION_INSTALLER_BINARY} ${VSH_GITHUB_LATEST_INSTALLER_RELEASE_BINARY})" > /dev/null 2>&1
+      chmod +x ${APPLICATION_INSTALLER_DIR}/${APPLICATION_INSTALLER_BINARY}
+  fi
 }
 
 ##############################################################################
@@ -282,6 +226,8 @@ function print_footer() {
 function print_usage() {
     local cmd_output_space='                '
     local cmd_name="-x"
+
+    up2date_check
 
     # show general help if no specific command was given
     if [[ -z "$1" ]]; then
@@ -326,7 +272,7 @@ function print_usage() {
             shutdown
         fi
 
-        # parse playbook file for comment header informations
+        # parse playbook file for comment header information
         while read -r line; do
             if [[ ${line} == "---" ]] ; then
                 break
@@ -377,6 +323,8 @@ function execute_ansible_playbook() {
     local ansible_options=""
     local parsed_args=$2
     local parsed_opts=$3
+
+    up2date_check
 
     # define complete extra vars object
     read -r -d '' ansible_extra_vars << EOM
@@ -563,7 +511,6 @@ function process_args() {
 function main() {
     prepare
     print_header
-    up2date_check
     process_args "$@"
     print_footer
     shutdown
