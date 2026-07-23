@@ -1,0 +1,106 @@
+##
+#   Copyright 2025 TechDivision GmbH
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+##
+
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - gocritic
+    - bodyclose
+    - dogsled
+    - unparam
+  settings:
+    errcheck:
+      check-type-assertions: true
+    govet:
+      enable:
+        - shadow
+    gocritic:
+      enabled-tags:
+        - performance
+        - style
+        - experimental
+      disabled-checks:
+        - wrapperFunc
+        - dupImport
+  exclusions:
+    presets: []
+    paths:
+      - "internal/config/global.go"
+      - "internal/config/project.go"
+    rules:
+      - path: _test\.go
+        linters: [gocyclo, errcheck, dupl, gosec, lll, funlen]
+      - path: cmd/valet/main.go
+        text: "os.Exit"
+        linters: [gocritic]
+      - text: "weak cryptographic primitive"
+        linters: [gosec]
+      - text: "G107"
+        linters: [gosec]
+      # syscall.Exec is intentional and documented
+      - text: "G204"
+        linters: [gosec]
+      # File paths are controlled constants or trusted internal values, not user input
+      - text: "G304"
+        linters: [gosec]
+      # Directory permissions 0755 are intentional (binaries/dirs need execute bit)
+      - text: "G301"
+        linters: [gosec]
+      # Binary chmod 0755 is intentional (executable must be runnable)
+      - text: "G302"
+        linters: [gosec]
+      # Version file 0644 is intentional (world-readable metadata)
+      - text: "G306"
+        linters: [gosec]
+      # writeVersionFile writes a trusted internal version string, not user input
+      - text: "G703"
+        linters: [gosec]
+      # parseSemver: SplitN(n=3) guarantees at most 3 parts, array is [3]int — safe
+      - text: "G602"
+        linters: [gosec]
+      # SA4017: comma-separated case conditions are both evaluated as OR — not a no-op
+      - text: "SA4017"
+        linters: [staticcheck]
+      # Intentional blank assignments for best-effort operations
+      - path: internal/commands/help.go
+        linters: [errcheck]
+      - path: internal/commands/helpers.go
+        linters: [errcheck]
+      - path: internal/updater/check.go
+        linters: [errcheck]
+      # Bubble Tea Elm architecture requires value receivers — hugeParam is expected
+      - path: internal/tui/
+        text: "hugeParam"
+        linters: [gocritic]
+      - path: internal/tui/exec.go
+        linters: [errcheck]
+      - path: internal/tui/runner.go
+        linters: [errcheck]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
