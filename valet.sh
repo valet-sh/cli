@@ -153,6 +153,19 @@ function self_upgrade() {
     touch "${APPLICATION_PREFIX_PATH}/${APPLICATION_GIT_NAMESPACE}/${APPLICATION_GIT_NAMESPACE}"
 }
 
+##############################################################################
+# select release channel
+##############################################################################
+function release_channel() {
+    # exit immediately if a command exits with a non-zero status
+    set -e
+
+    # trigger sudo password check
+    sudo true
+
+    command "${APPLICATION_INSTALLER_DIR}/${APPLICATION_INSTALLER_BINARY}" release-channel $1
+}
+
 function check_installer() {
   VSH_USER=${USER}
 
@@ -244,6 +257,10 @@ function print_usage() {
 
         local cmd_name="self-upgrade"
         local cmd_description="Upgrade to latest version."
+        printf "  \\e[32m%s %s \\e[39m${cmd_description}\\n" "${cmd_name}" "${cmd_output_space:${#cmd_name}}"
+
+        local cmd_name="release-channel"
+        local cmd_description="Switch release channels"
         printf "  \\e[32m%s %s \\e[39m${cmd_description}\\n" "${cmd_name}" "${cmd_output_space:${#cmd_name}}"
 
         if [ -d "$BASE_DIR/playbooks" ]; then
@@ -495,6 +512,7 @@ function process_args() {
         if [ -n "$*" ]; then
             case "${1--h}" in
                 self-upgrade) self_upgrade;;
+                release-channel) release_channel "$2";;
                 # try to execute playbook based on command
                 # ansible will throw an error if specific playbook does not exist
                 *) execute_ansible_playbook "$parsed_command" "$parsed_args" "$parsed_opts";;
